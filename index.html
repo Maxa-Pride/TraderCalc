@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#4CAF50">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon-192.png">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -14,15 +15,17 @@
       display: flex;
       justify-content: center;
       align-items: center;
-      height: 100vh;
+      min-height: 100vh;
       margin: 0;
+      padding: 20px;
     }
     .calculator {
       background: white;
       padding: 20px 30px;
       border-radius: 8px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-      width: 380px;
+      width: 420px;
+      max-width: 100%;
     }
     h2 {
       text-align: center;
@@ -32,7 +35,7 @@
       display: block;
       margin: 10px 0 5px;
     }
-    input {
+    input, select {
       width: 100%;
       padding: 8px;
       border: 1px solid #ccc;
@@ -58,11 +61,21 @@
       font-weight: bold;
       text-align: center;
     }
+    canvas {
+      margin-top: 20px;
+      max-height: 250px;
+    }
   </style>
 </head>
 <body>
   <div class="calculator">
     <h2>Калькулятор трейдера</h2>
+
+    <label>Тип позиции:</label>
+    <select id="positionType">
+      <option value="long">Лонг</option>
+      <option value="short">Шорт</option>
+    </select>
 
     <label>Депозит ($):</label>
     <input type="number" id="deposit" placeholder="Введите сумму депозита">
@@ -85,10 +98,15 @@
     <button onclick="calculate()">Рассчитать</button>
 
     <div class="result" id="result"></div>
+
+    <canvas id="tradeChart"></canvas>
   </div>
 
   <script>
+    let chart;
+
     function calculate() {
+      const positionType = document.getElementById('positionType').value;
       const deposit = parseFloat(document.getElementById('deposit').value);
       const riskPercent = parseFloat(document.getElementById('risk').value);
       const entry = parseFloat(document.getElementById('entry').value);
@@ -102,18 +120,26 @@
       }
 
       const riskAmount = deposit * (riskPercent / 100);
-      const riskPerUnit = Math.abs(entry - stop);
 
-      if (riskPerUnit === 0) {
-        document.getElementById('result').innerText = "Цена входа и стоп не могут быть одинаковыми!";
+      let riskPerUnit, potentialProfit;
+      if (positionType === "long") {
+        riskPerUnit = entry - stop;
+        potentialProfit = (takeprofit - entry);
+      } else { // short
+        riskPerUnit = stop - entry;
+        potentialProfit = (entry - takeprofit);
+      }
+
+      if (riskPerUnit <= 0) {
+        document.getElementById('result').innerText = "Некорректные значения стопа для выбранного типа позиции!";
         return;
       }
 
       const positionSize = riskAmount / riskPerUnit;
       const units = positionSize / entry;
       const requiredMargin = positionSize / leverage;
-      const potentialProfit = (takeprofit - entry) * units;
-      const rrRatio = potentialProfit > 0 ? (potentialProfit / riskAmount).toFixed(2) : "—";
+      const profit = potentialProfit * units;
+      const rrRatio = profit > 0 ? (profit / riskAmount).toFixed(2) : "—";
 
       let warning = "";
       if (requiredMargin > deposit) {
@@ -121,17 +147,54 @@
       }
 
       document.getElementById('result').innerHTML = `
+        Тип позиции: ${positionType === "long" ? "Лонг" : "Шорт"}<br>
         Сумма риска: $${riskAmount.toFixed(2)}<br>
         Размер позиции: $${positionSize.toFixed(2)}<br>
         Количество единиц: ${units.toFixed(4)}<br>
         Требуемая маржа: $${requiredMargin.toFixed(2)} (при плече x${leverage})<br>
-        Потенциальная прибыль (TP): $${potentialProfit.toFixed(2)}<br>
+        Потенциальная прибыль (TP): $${profit.toFixed(2)}<br>
         Соотношение риск/прибыль (R:R): ${rrRatio}
         ${warning}
       `;
+
+      drawChart(positionType, entry, stop, takeprofit);
     }
 
-    // Регистрация Service Worker
+    function drawChart(type, entry, stop, tp) {
+      const labels = ["Стоп", "Вход", "TP"];
+      const values = type === "long" ? [stop, entry, tp] : [tp, entry, stop];
+
+      const colors = values.map(v => {
+        if (v === entry) return "blue";
+        if ((type === "long" && v === stop) || (type === "short" && v === stop)) return "red";
+        return "green";
+      });
+
+      if (chart) chart.destroy();
+
+      chart = new Chart(document.getElementById("tradeChart"), {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [{
+            label: "Цена",
+            data: values,
+            borderColor: "gray",
+            borderWidth: 1,
+            pointBackgroundColor: colors,
+            pointRadius: 6
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: { title: { display: true, text: "Цена" } }
+          }
+        }
+      });
+    }
+
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("service-worker.js")
         .then(() => console.log("✅ Service Worker зарегистрирован"))
